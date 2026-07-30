@@ -20,32 +20,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ---------------------------------------------------------------------------
-# Find Dependencies (Custom live555 Installation Path)
-# ---------------------------------------------------------------------------
-
-# Use environment variable $ENV{HOME} for portable Linux/Android paths
-if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Android")
-    # Android path
-    list(APPEND CMAKE_PREFIX_PATH 
-        "$ENV{HOME}/libs/live555"
-    )
-elseif(WIN32)
-    # Windows paths
-    list(APPEND CMAKE_PREFIX_PATH 
-        "C:/dev/libs/live555/debug"
-        "C:/dev/libs/live555/release"
-    )
-else()
-    # General Linux / macOS path
-    list(APPEND CMAKE_PREFIX_PATH 
-        "$ENV{HOME}/libs/live555"
-    )
-endif()
-
-# Find native live555 package installed via your custom CMake build
-find_package(live555 CONFIG REQUIRED)
-
-# ---------------------------------------------------------------------------
 # Target Definition
 # ---------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
@@ -58,6 +32,55 @@ add_library(${PROJECT_NAME} SHARED
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+# ---------------------------------------------------------------------------
+# Find Dependencies (Windows Monolith vs Android/Linux Static Archives)
+# ---------------------------------------------------------------------------
+
+if(WIN32)
+    # --- Windows Monolithic Package Setup ---
+    list(APPEND CMAKE_PREFIX_PATH 
+        "C:/dev/libs/live555/debug"
+        "C:/dev/libs/live555/release"
+    )
+    
+    find_package(live555 CONFIG REQUIRED)
+    
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        live555::live555
+        ws2_32
+    )
+
+else()
+    # --- Android / Linux Direct Search Setup ---
+    set(LIVE555_ROOT "$ENV{HOME}/libs/live555" CACHE PATH "Path to live555 installation root")
+
+    # Locate the 4 separate static libraries
+    find_library(LIVE_MEDIA_LIB liveMedia HINTS ${LIVE555_ROOT}/lib REQUIRED)
+    find_library(GROUP_SOCK_LIB groupsock HINTS ${LIVE555_ROOT}/lib REQUIRED)
+    find_library(USAGE_ENV_LIB UsageEnvironment HINTS ${LIVE555_ROOT}/lib REQUIRED)
+    find_library(BASIC_USAGE_ENV_LIB BasicUsageEnvironment HINTS ${LIVE555_ROOT}/lib REQUIRED)
+
+    # Include header directories
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${LIVE555_ROOT}/include/liveMedia
+        ${LIVE555_ROOT}/include/groupsock
+        ${LIVE555_ROOT}/include/UsageEnvironment
+        ${LIVE555_ROOT}/include/BasicUsageEnvironment
+    )
+
+    # Link static archives and Android system libraries
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${LIVE_MEDIA_LIB}
+        ${GROUP_SOCK_LIB}
+        ${BASIC_USAGE_ENV_LIB}
+        ${USAGE_ENV_LIB}
+    )
+
+    if(ANDROID)
+        target_link_libraries(${PROJECT_NAME} PRIVATE log android)
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # Compile Definitions
@@ -90,20 +113,6 @@ else()
         CXX_VISIBILITY_PRESET default
         VISIBILITY_INLINES_HIDDEN OFF
     )
-endif()
-
-# ---------------------------------------------------------------------------
-# Linking Dependencies
-# ---------------------------------------------------------------------------
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    live555::live555
-)
-
-if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-elseif(ANDROID)
-    # Android platform logging and system support
-    target_link_libraries(${PROJECT_NAME} PRIVATE log android)
 endif()
 
 # ---------------------------------------------------------------------------
