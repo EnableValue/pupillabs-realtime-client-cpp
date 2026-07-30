@@ -5,6 +5,9 @@ project(plrtspservice
     LANGUAGES CXX C
 )
 
+# Standard GNU install paths (defines CMAKE_INSTALL_BINDIR, CMAKE_INSTALL_LIBDIR, CMAKE_INSTALL_INCLUDEDIR)
+include(GNUInstallDirs)
+
 # ---------------------------------------------------------------------------
 # Global Settings
 # ---------------------------------------------------------------------------
@@ -17,9 +20,26 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ---------------------------------------------------------------------------
-# Find Dependencies via vcpkg
+# Find Dependencies (Custom live555 Installation Path)
 # ---------------------------------------------------------------------------
-find_package(unofficial-live555 CONFIG REQUIRED)
+
+## Map configurations to their respective install root directories
+#list(APPEND CMAKE_PREFIX_PATH 
+#    "$<$<CONFIG:Debug>:C:/dev/libs/live555/debug>"
+#    "$<$<CONFIG:Release>:C:/dev/libs/live555/release>"
+#)
+
+# Point CMAKE_PREFIX_PATH to both debug and release search roots
+list(APPEND CMAKE_PREFIX_PATH 
+    "C:/dev/libs/live555/debug"
+    "C:/dev/libs/live555/release"
+)
+
+
+
+
+# Find native live555 package installed via your custom CMake build
+find_package(live555 CONFIG REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Target Definition
@@ -71,11 +91,9 @@ endif()
 # ---------------------------------------------------------------------------
 # Linking Dependencies
 # ---------------------------------------------------------------------------
+# Custom live555 build exports targets under the live555:: namespace instead of unofficial::
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    unofficial::groupsock
-    unofficial::liveMedia
-    unofficial::UsageEnvironment
-    unofficial::BasicUsageEnvironment
+    live555::live555
 )
 
 if(WIN32)
@@ -92,3 +110,17 @@ if(APPLE)
         INSTALL_RPATH "@loader_path"
     )
 endif()
+
+
+# ---------------------------------------------------------------------------
+# Installation Rules
+# ---------------------------------------------------------------------------
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}  # Installs .dll -> bin/
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .lib -> lib/
+)
+
+# Optionally copy header files required by users of plrtspservice
+install(FILES RTSPService.hh LoggingUsageEnvironment.hh
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}      # Installs .hh -> include/
+)
