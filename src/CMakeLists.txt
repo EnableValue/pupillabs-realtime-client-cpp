@@ -23,20 +23,24 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Find Dependencies (Custom live555 Installation Path)
 # ---------------------------------------------------------------------------
 
-## Map configurations to their respective install root directories
-#list(APPEND CMAKE_PREFIX_PATH 
-#    "$<$<CONFIG:Debug>:C:/dev/libs/live555/debug>"
-#    "$<$<CONFIG:Release>:C:/dev/libs/live555/release>"
-#)
-
-# Point CMAKE_PREFIX_PATH to both debug and release search roots
-list(APPEND CMAKE_PREFIX_PATH 
-    "C:/dev/libs/live555/debug"
-    "C:/dev/libs/live555/release"
-)
-
-
-
+# Use environment variable $ENV{HOME} for portable Linux/Android paths
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Android path
+    list(APPEND CMAKE_PREFIX_PATH 
+        "$ENV{HOME}/libs/live555"
+    )
+elseif(WIN32)
+    # Windows paths
+    list(APPEND CMAKE_PREFIX_PATH 
+        "C:/dev/libs/live555/debug"
+        "C:/dev/libs/live555/release"
+    )
+else()
+    # General Linux / macOS path
+    list(APPEND CMAKE_PREFIX_PATH 
+        "$ENV{HOME}/libs/live555"
+    )
+endif()
 
 # Find native live555 package installed via your custom CMake build
 find_package(live555 CONFIG REQUIRED)
@@ -76,12 +80,12 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
-# Symbol Visibility for P/Invoke
+# Symbol Visibility for P/Invoke / JNI
 # ---------------------------------------------------------------------------
 if(WIN32)
     # On Windows, symbols marked with __declspec(dllexport) via PLRTSPSERVICE_EXPORTS are exported
 else()
-    # On macOS/Linux, make all symbols default-visible for dynamic loading/PInvoke
+    # On Android/macOS/Linux, make all symbols default-visible for dynamic loading/PInvoke
     set_target_properties(${PROJECT_NAME} PROPERTIES
         CXX_VISIBILITY_PRESET default
         VISIBILITY_INLINES_HIDDEN OFF
@@ -91,13 +95,15 @@ endif()
 # ---------------------------------------------------------------------------
 # Linking Dependencies
 # ---------------------------------------------------------------------------
-# Custom live555 build exports targets under the live555:: namespace instead of unofficial::
 target_link_libraries(${PROJECT_NAME} PRIVATE
     live555::live555
 )
 
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+elseif(ANDROID)
+    # Android platform logging and system support
+    target_link_libraries(${PROJECT_NAME} PRIVATE log android)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -111,12 +117,12 @@ if(APPLE)
     )
 endif()
 
-
 # ---------------------------------------------------------------------------
 # Installation Rules
 # ---------------------------------------------------------------------------
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}  # Installs .dll -> bin/
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .so on Linux/Android -> lib/
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .lib -> lib/
 )
 
