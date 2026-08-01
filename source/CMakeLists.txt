@@ -5,7 +5,6 @@ project(plrtspservice
     LANGUAGES CXX C
 )
 
-# Standard GNU install paths (defines CMAKE_INSTALL_BINDIR, CMAKE_INSTALL_LIBDIR, CMAKE_INSTALL_INCLUDEDIR)
 include(GNUInstallDirs)
 
 # ---------------------------------------------------------------------------
@@ -15,16 +14,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Standardize output locations for built libraries
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# Enable automatic symbol export/import handling on Windows
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 # ---------------------------------------------------------------------------
 # LIVE555_ROOT Auto-Resolution
 # ---------------------------------------------------------------------------
-# If LIVE555_ROOT is not provided via -DLIVE555_ROOT=..., resolve path relative to source directory:
-# source directory: <workspace>/plrtspservice/source
-# install directory: <workspace>/installs/<platform_triple>
 if(NOT LIVE555_ROOT)
     get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
     
@@ -45,11 +43,6 @@ if(NOT LIVE555_ROOT)
 endif()
 
 message(STATUS "[plrtspservice] Target Platform LIVE555_ROOT: ${LIVE555_ROOT}")
-
-# Validate required Live555 include paths
-if(NOT EXISTS "${LIVE555_ROOT}/include/liveMedia/liveMedia.hh")
-    message(FATAL_ERROR "Could not locate Live555 headers inside: ${LIVE555_ROOT}/include. Please verify LIVE555_ROOT.")
-endif()
 
 # ---------------------------------------------------------------------------
 # Target Definition
@@ -74,7 +67,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Locate Shared Monolithic Live555 Libraries
 # ---------------------------------------------------------------------------
 if(WIN32)
-    # 1. Locate MSVC Import Library (.lib)
     find_library(LIVE555_IMPORT_LIB
         NAMES live555 liblive555
         HINTS "${LIVE555_ROOT}/lib" "${LIVE555_ROOT}/bin"
@@ -82,7 +74,6 @@ if(WIN32)
         REQUIRED
     )
     
-    # 2. Locate Shared Dynamic Link Library (.dll)
     find_file(LIVE555_DLL
         NAMES live555.dll
         HINTS "${LIVE555_ROOT}/bin" "${LIVE555_ROOT}/lib"
@@ -93,7 +84,6 @@ if(WIN32)
     message(STATUS "[plrtspservice] Found Live555 Import Lib: ${LIVE555_IMPORT_LIB}")
     message(STATUS "[plrtspservice] Found Live555 Shared DLL: ${LIVE555_DLL}")
 
-    # Create an Imported Target to wrap the Windows DLL/LIB pair cleanly
     add_library(Live555::Monolith SHARED IMPORTED GLOBAL)
     set_target_properties(Live555::Monolith PROPERTIES
         IMPORTED_IMPLIB "${LIVE555_IMPORT_LIB}"
@@ -105,16 +95,15 @@ if(WIN32)
         ws2_32
     )
 
-    # 3. Post-build step: Copy live555.dll to target execution directory
+    # Post-build step: Copy live555.dll to build execution folder
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${LIVE555_DLL}"
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMENT "Copying live555.dll to output folder for runtime loading..."
+        COMMENT "Copying live555.dll to output folder..."
     )
 
 else()
-    # macOS, Linux, Android (.so / .dylib)
     find_library(LIVE555_SHARED_LIB
         NAMES live555 liblive555
         HINTS "${LIVE555_ROOT}/lib"
@@ -122,8 +111,6 @@ else()
         NO_DEFAULT_PATH
         REQUIRED
     )
-
-    message(STATUS "[plrtspservice] Found Live555 Shared Library: ${LIVE555_SHARED_LIB}")
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${LIVE555_SHARED_LIB}
@@ -135,21 +122,13 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Compile Definitions & Flags
+# Compile Definitions (MATCHING LIVE555 CONFIG.WIN64 EXACTLY)
 # ---------------------------------------------------------------------------
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     PLRTSPSERVICE_EXPORTS
     NO_OPENSSL=1
-)
-
-
-# Include header directories
-target_include_directories(${PROJECT_NAME} PRIVATE
-	${LIVE555_ROOT}/include/liveMedia
-	${LIVE555_ROOT}/include/groupsock
-	${LIVE555_ROOT}/include/UsageEnvironment
-	${LIVE555_ROOT}/include/BasicUsageEnvironment
-	${LIVE555_ROOT}/include
+    NO_STD_LIB=1
+    LOCALE_NOT_USED=1
 )
 
 if(WIN32)
@@ -157,16 +136,14 @@ if(WIN32)
         _WINDOWS
         _USRDLL
         WIN32_LEAN_AND_MEAN
-        LIVEMEDIA_API=__declspec\(dllimport\)
+        _CRT_SECURE_NO_WARNINGS
     )
 endif()
 
 # ---------------------------------------------------------------------------
 # Symbol Visibility & RPATH Settings
 # ---------------------------------------------------------------------------
-if(WIN32)
-    # Symbols exported via PLRTSPSERVICE_EXPORTS annotation macro
-else()
+if(NOT WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         CXX_VISIBILITY_PRESET default
         VISIBILITY_INLINES_HIDDEN OFF
@@ -189,7 +166,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Installation Rules
 # ---------------------------------------------------------------------------
-# Installation path resolves automatically to <workspace>/installs/<platform_triple>
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
     if(WIN32)
