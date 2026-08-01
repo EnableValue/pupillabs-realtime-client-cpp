@@ -20,6 +20,38 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ---------------------------------------------------------------------------
+# LIVE555_ROOT Auto-Resolution
+# ---------------------------------------------------------------------------
+# If LIVE555_ROOT is not provided via -DLIVE555_ROOT=..., resolve path relative to source directory:
+# source directory: <workspace>/plrtspservice/source
+# install directory: <workspace>/installs/<platform_triple>
+if(NOT LIVE555_ROOT)
+    get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+    
+    if(WIN32)
+        set(LIVE555_ROOT "${WORKSPACE_ROOT}/installs/windows/x64")
+    elseif(ANDROID)
+        if(CMAKE_ANDROID_ARCH_ABI)
+            set(TARGET_ABI ${CMAKE_ANDROID_ARCH_ABI})
+        else()
+            set(TARGET_ABI "arm64-v8a")
+        endif()
+        set(LIVE555_ROOT "${WORKSPACE_ROOT}/installs/android/${TARGET_ABI}")
+    elseif(APPLE)
+        set(LIVE555_ROOT "${WORKSPACE_ROOT}/installs/macos/arm64")
+    else()
+        set(LIVE555_ROOT "${WORKSPACE_ROOT}/installs/linux/x64")
+    endif()
+endif()
+
+message(STATUS "[plrtspservice] Target Platform LIVE555_ROOT: ${LIVE555_ROOT}")
+
+# Validate required Live555 include paths
+if(NOT EXISTS "${LIVE555_ROOT}/include/liveMedia/liveMedia.hh")
+    message(FATAL_ERROR "Could not locate Live555 headers inside: ${LIVE555_ROOT}/include. Please verify LIVE555_ROOT.")
+endif()
+
+# ---------------------------------------------------------------------------
 # Target Definition
 # ---------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
@@ -31,56 +63,70 @@ add_library(${PROJECT_NAME} SHARED
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${LIVE555_ROOT}/include
+    ${LIVE555_ROOT}/include/liveMedia
+    ${LIVE555_ROOT}/include/groupsock
+    ${LIVE555_ROOT}/include/UsageEnvironment
+    ${LIVE555_ROOT}/include/BasicUsageEnvironment
 )
 
 # ---------------------------------------------------------------------------
-# Find Dependencies (Windows Monolith vs Android/Linux Static Archives)
+# Locate Shared Monolithic Live555 Libraries
 # ---------------------------------------------------------------------------
-
 if(WIN32)
-    # --- Windows Monolithic Package Setup ---
-    list(APPEND CMAKE_PREFIX_PATH 
-        "C:/dev/libs/live555/debug"
-        "C:/dev/libs/live555/release"
+    # 1. Locate MSVC Import Library (.lib)
+    find_library(LIVE555_IMPORT_LIB
+        NAMES live555 liblive555
+        HINTS "${LIVE555_ROOT}/lib" "${LIVE555_ROOT}/bin"
+        NO_DEFAULT_PATH
+        REQUIRED
     )
     
-    find_package(live555 CONFIG REQUIRED)
-    
+    # 2. Locate Shared Dynamic Link Library (.dll)
+    find_file(LIVE555_DLL
+        NAMES live555.dll
+        HINTS "${LIVE555_ROOT}/bin" "${LIVE555_ROOT}/lib"
+        NO_DEFAULT_PATH
+        REQUIRED
+    )
+
+    message(STATUS "[plrtspservice] Found Live555 Import Lib: ${LIVE555_IMPORT_LIB}")
+    message(STATUS "[plrtspservice] Found Live555 Shared DLL: ${LIVE555_DLL}")
+
+    # Create an Imported Target to wrap the Windows DLL/LIB pair cleanly
+    add_library(Live555::Monolith SHARED IMPORTED GLOBAL)
+    set_target_properties(Live555::Monolith PROPERTIES
+        IMPORTED_IMPLIB "${LIVE555_IMPORT_LIB}"
+        IMPORTED_LOCATION "${LIVE555_DLL}"
+    )
+
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        live555::live555
+        Live555::Monolith
         ws2_32
     )
 
-else()
-    # --- Android / Linux Direct Search Setup ---
-    # Allow overriding via command line -DLIVE555_ROOT=... or fallback to $ENV{HOME}/libs/live555
-    if(NOT LIVE555_ROOT)
-        set(LIVE555_ROOT "$ENV{HOME}/libs/live555")
-    endif()
-
-    message(STATUS "Searching for live555 static libraries in: ${LIVE555_ROOT}/lib")
-
-    # Pass NO_CMAKE_FIND_ROOT_PATH so Android toolchain doesn't ignore paths outside NDK sysroot
-    find_library(LIVE_MEDIA_LIB NAMES liveMedia libliveMedia HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(GROUP_SOCK_LIB NAMES groupsock libgroupsock HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(USAGE_ENV_LIB NAMES UsageEnvironment libUsageEnvironment HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(BASIC_USAGE_ENV_LIB NAMES BasicUsageEnvironment libBasicUsageEnvironment HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-
-    # Include header directories
-    target_include_directories(${PROJECT_NAME} PRIVATE
-        ${LIVE555_ROOT}/include/liveMedia
-        ${LIVE555_ROOT}/include/groupsock
-        ${LIVE555_ROOT}/include/UsageEnvironment
-        ${LIVE555_ROOT}/include/BasicUsageEnvironment
-        ${LIVE555_ROOT}/include
+    # 3. Post-build step: Copy live555.dll to target execution directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${LIVE555_DLL}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMENT "Copying live555.dll to output folder for runtime loading..."
     )
 
-    # Link static archives
+else()
+    # macOS, Linux, Android (.so / .dylib)
+    find_library(LIVE555_SHARED_LIB
+        NAMES live555 liblive555
+        HINTS "${LIVE555_ROOT}/lib"
+        NO_CMAKE_FIND_ROOT_PATH
+        NO_DEFAULT_PATH
+        REQUIRED
+    )
+
+    message(STATUS "[plrtspservice] Found Live555 Shared Library: ${LIVE555_SHARED_LIB}")
+
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        ${LIVE_MEDIA_LIB}
-        ${GROUP_SOCK_LIB}
-        ${BASIC_USAGE_ENV_LIB}
-        ${USAGE_ENV_LIB}
+        ${LIVE555_SHARED_LIB}
     )
 
     if(ANDROID)
@@ -89,59 +135,80 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Compile Definitions
+# Compile Definitions & Flags
 # ---------------------------------------------------------------------------
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    # Macro for exporting symbols from your own library
     PLRTSPSERVICE_EXPORTS
-    
-    # live555 defines
     NO_OPENSSL=1
 )
 
-# Standard platform definitions
+
+# Include header directories
+target_include_directories(${PROJECT_NAME} PRIVATE
+	${LIVE555_ROOT}/include/liveMedia
+	${LIVE555_ROOT}/include/groupsock
+	${LIVE555_ROOT}/include/UsageEnvironment
+	${LIVE555_ROOT}/include/BasicUsageEnvironment
+	${LIVE555_ROOT}/include
+)
+
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         _WINDOWS
         _USRDLL
         WIN32_LEAN_AND_MEAN
+        LIVEMEDIA_API=__declspec\(dllimport\)
     )
 endif()
 
 # ---------------------------------------------------------------------------
-# Symbol Visibility for P/Invoke / JNI
+# Symbol Visibility & RPATH Settings
 # ---------------------------------------------------------------------------
 if(WIN32)
-    # On Windows, symbols marked with __declspec(dllexport) via PLRTSPSERVICE_EXPORTS are exported
+    # Symbols exported via PLRTSPSERVICE_EXPORTS annotation macro
 else()
-    # On Android/macOS/Linux, make all symbols default-visible for dynamic loading/PInvoke
     set_target_properties(${PROJECT_NAME} PROPERTIES
         CXX_VISIBILITY_PRESET default
         VISIBILITY_INLINES_HIDDEN OFF
     )
 endif()
 
-# ---------------------------------------------------------------------------
-# macOS Universal Binary / P/Invoke Configuration
-# ---------------------------------------------------------------------------
 if(APPLE)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_RPATH TRUE
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH "@loader_path"
     )
+elseif(UNIX AND NOT ANDROID)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
 # ---------------------------------------------------------------------------
 # Installation Rules
 # ---------------------------------------------------------------------------
+# Installation path resolves automatically to <workspace>/installs/<platform_triple>
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    get_filename_component(WORKSPACE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+    if(WIN32)
+        set(CMAKE_INSTALL_PREFIX "${WORKSPACE_ROOT}/installs/windows/x64" CACHE PATH "Default Install Prefix" FORCE)
+    elseif(ANDROID)
+        set(CMAKE_INSTALL_PREFIX "${WORKSPACE_ROOT}/installs/android/${TARGET_ABI}" CACHE PATH "Default Install Prefix" FORCE)
+    elseif(APPLE)
+        set(CMAKE_INSTALL_PREFIX "${WORKSPACE_ROOT}/installs/macos/arm64" CACHE PATH "Default Install Prefix" FORCE)
+    else()
+        set(CMAKE_INSTALL_PREFIX "${WORKSPACE_ROOT}/installs/linux/x64" CACHE PATH "Default Install Prefix" FORCE)
+    endif()
+endif()
+
 install(TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}  # Installs .dll -> bin/
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .so on Linux/Android -> lib/
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .lib -> lib/
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-# Optionally copy header files required by users of plrtspservice
 install(FILES RTSPService.hh LoggingUsageEnvironment.hh
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}      # Installs .hh -> include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
