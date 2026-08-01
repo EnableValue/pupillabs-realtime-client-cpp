@@ -20,6 +20,33 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ---------------------------------------------------------------------------
+# Find Dependencies (Custom live555 Installation Path)
+# ---------------------------------------------------------------------------
+
+## Map configurations to their respective install root directories
+#list(APPEND CMAKE_PREFIX_PATH 
+#    "$<$<CONFIG:Debug>:C:/dev/libs/live555/debug>"
+#    "$<$<CONFIG:Release>:C:/dev/libs/live555/release>"
+#)
+
+
+#the paths below are available only on windows
+
+# Point CMAKE_PREFIX_PATH to both debug and release search roots
+list(APPEND CMAKE_PREFIX_PATH 
+    "C:/dev/libs/live555/debug"
+    "C:/dev/libs/live555/release"
+)
+
+
+#the path below are available only for linux / android replace home/ptp with $HOME 
+#/home/ptp/libs/live555
+
+
+# Find native live555 package installed via your custom CMake build
+find_package(live555 CONFIG REQUIRED)
+
+# ---------------------------------------------------------------------------
 # Target Definition
 # ---------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
@@ -32,61 +59,6 @@ add_library(${PROJECT_NAME} SHARED
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-
-# ---------------------------------------------------------------------------
-# Find Dependencies (Windows Monolith vs Android/Linux Static Archives)
-# ---------------------------------------------------------------------------
-
-if(WIN32)
-    # --- Windows Monolithic Package Setup ---
-    list(APPEND CMAKE_PREFIX_PATH 
-        "C:/dev/libs/live555/debug"
-        "C:/dev/libs/live555/release"
-    )
-    
-    find_package(live555 CONFIG REQUIRED)
-    
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        live555::live555
-        ws2_32
-    )
-
-else()
-    # --- Android / Linux Direct Search Setup ---
-    # Allow overriding via command line -DLIVE555_ROOT=... or fallback to $ENV{HOME}/libs/live555
-    if(NOT LIVE555_ROOT)
-        set(LIVE555_ROOT "$ENV{HOME}/libs/live555")
-    endif()
-
-    message(STATUS "Searching for live555 static libraries in: ${LIVE555_ROOT}/lib")
-
-    # Pass NO_CMAKE_FIND_ROOT_PATH so Android toolchain doesn't ignore paths outside NDK sysroot
-    find_library(LIVE_MEDIA_LIB NAMES liveMedia libliveMedia HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(GROUP_SOCK_LIB NAMES groupsock libgroupsock HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(USAGE_ENV_LIB NAMES UsageEnvironment libUsageEnvironment HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-    find_library(BASIC_USAGE_ENV_LIB NAMES BasicUsageEnvironment libBasicUsageEnvironment HINTS "${LIVE555_ROOT}/lib" NO_CMAKE_FIND_ROOT_PATH REQUIRED)
-
-    # Include header directories
-    target_include_directories(${PROJECT_NAME} PRIVATE
-        ${LIVE555_ROOT}/include/liveMedia
-        ${LIVE555_ROOT}/include/groupsock
-        ${LIVE555_ROOT}/include/UsageEnvironment
-        ${LIVE555_ROOT}/include/BasicUsageEnvironment
-        ${LIVE555_ROOT}/include
-    )
-
-    # Link static archives
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        ${LIVE_MEDIA_LIB}
-        ${GROUP_SOCK_LIB}
-        ${BASIC_USAGE_ENV_LIB}
-        ${USAGE_ENV_LIB}
-    )
-
-    if(ANDROID)
-        target_link_libraries(${PROJECT_NAME} PRIVATE log android)
-    endif()
-endif()
 
 # ---------------------------------------------------------------------------
 # Compile Definitions
@@ -109,16 +81,28 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
-# Symbol Visibility for P/Invoke / JNI
+# Symbol Visibility for P/Invoke
 # ---------------------------------------------------------------------------
 if(WIN32)
     # On Windows, symbols marked with __declspec(dllexport) via PLRTSPSERVICE_EXPORTS are exported
 else()
-    # On Android/macOS/Linux, make all symbols default-visible for dynamic loading/PInvoke
+    # On macOS/Linux, make all symbols default-visible for dynamic loading/PInvoke
     set_target_properties(${PROJECT_NAME} PROPERTIES
         CXX_VISIBILITY_PRESET default
         VISIBILITY_INLINES_HIDDEN OFF
     )
+endif()
+
+# ---------------------------------------------------------------------------
+# Linking Dependencies
+# ---------------------------------------------------------------------------
+# Custom live555 build exports targets under the live555:: namespace instead of unofficial::
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    live555::live555
+)
+
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -132,12 +116,12 @@ if(APPLE)
     )
 endif()
 
+
 # ---------------------------------------------------------------------------
 # Installation Rules
 # ---------------------------------------------------------------------------
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}  # Installs .dll -> bin/
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .so on Linux/Android -> lib/
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}  # Installs .lib -> lib/
 )
 
