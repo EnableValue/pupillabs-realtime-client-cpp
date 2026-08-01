@@ -17,8 +17,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Enable automatic symbol export/import handling on Windows
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# Do NOT export all symbols on Windows. We explicitly export only functions
+# marked with PLRTSPSERVICE_API (__declspec(dllexport)).
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
 
 # ---------------------------------------------------------------------------
 # LIVE555_ROOT Auto-Resolution
@@ -95,7 +96,7 @@ if(WIN32)
         ws2_32
     )
 
-    # Post-build step: Copy live555.dll to build execution folder
+    # Post-build step: Copy live555.dll into the build output folder
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${LIVE555_DLL}"
@@ -122,10 +123,13 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Compile Definitions (MATCHING LIVE555 CONFIG.WIN64 EXACTLY)
+# Compile Definitions
 # ---------------------------------------------------------------------------
 target_compile_definitions(${PROJECT_NAME} PRIVATE
+    # Activates __declspec(dllexport) in your PLRTSPSERVICE_API macro
     PLRTSPSERVICE_EXPORTS
+    
+    # Matches Live555 compilation parameters
     NO_OPENSSL=1
     NO_STD_LIB=1
     LOCALE_NOT_USED=1
