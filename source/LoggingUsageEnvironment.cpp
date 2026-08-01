@@ -1,10 +1,11 @@
 #include "LoggingUsageEnvironment.hh"
 #include <stdio.h>
+#include <string.h>
 
 LoggingUsageEnvironment::LoggingUsageEnvironment(TaskScheduler& taskScheduler, LogCallback callback, void* userData) : BasicUsageEnvironment(taskScheduler) {
 	this->callback = callback;
 	this->userData = userData;
-	std::memset(buffer, 0, BUFFER_SIZE);
+	memset(buffer, 0, BUFFER_SIZE);
 }
 
 void LoggingUsageEnvironment::writeFormatted(const char* format, ...) {
